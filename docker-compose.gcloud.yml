@@ -1,0 +1,10 @@
+# Optional: mount host Application Default Credentials (after `gcloud auth application-default login`).
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.gcloud.yml run --rm agent
+#
+# Linux/macOS: default below. Windows + Docker Desktop: set GCLOUD_CONFIG in .env to your user profile path.
+
+services:
+  agent:
+    volumes:
+      - ${GCLOUD_CONFIG:-${HOME}/.config/gcloud}:/root/.config/gcloud:ro

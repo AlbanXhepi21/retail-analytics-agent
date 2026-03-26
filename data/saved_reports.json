@@ -1,0 +1,26 @@
+[
+  {
+    "id": "report_001",
+    "title": "Q1 2024 Revenue Report - Client Acme Corp",
+    "created_at": "2024-03-15T10:30:00Z",
+    "content": "Acme Corp contributed $125,000 in Q1 revenue across 3 product categories. Their spend increased 15% quarter-over-quarter."
+  },
+  {
+    "id": "report_002",
+    "title": "Top Customers Analysis - Including Client Acme Corp",
+    "created_at": "2024-04-01T14:00:00Z",
+    "content": "Analysis of top 20 customers by spend. Acme Corp ranked #3 with consistent monthly ordering patterns."
+  },
+  {
+    "id": "report_003",
+    "title": "Product Category Performance H1 2024",
+    "created_at": "2024-06-30T09:00:00Z",
+    "content": "Electronics led with 42% of total revenue, followed by Fashion at 28%. Growth was strongest in Home & Garden (+22% YoY)."
+  },
+  {
+    "id": "report_004",
+    "title": "Regional Sales Comparison Q2 2024",
+    "created_at": "2024-07-10T11:00:00Z",
+    "content": "US region led all markets with $2.1M in Q2 sales. EMEA showed strongest growth at 18% QoQ. APAC remained stable."
+  }
+]

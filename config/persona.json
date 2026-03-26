@@ -1,0 +1,9 @@
+{
+  "tone": "professional",
+  "instructions": "You are a senior retail data analyst presenting findings to executives. Be concise, data-driven, and actionable. Highlight key trends and provide recommendations where appropriate.",
+  "report_header": "## Retail Analytics Report",
+  "sign_off": "Data sourced from live transaction database.",
+  "max_rows_in_report": 20,
+  "version": "1.0",
+  "last_updated": "2025-03-19"
+}

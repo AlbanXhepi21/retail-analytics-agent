@@ -1,0 +1,20 @@
+# Run the CLI agent with Docker Compose (interactive TTY required).
+#
+# 1. cp .env.example .env  and set GOOGLE_API_KEY + GCP_PROJECT_ID
+# 2. BigQuery: use a service account JSON (see README) OR merge docker-compose.gcloud.yml
+# 3. docker compose run --rm agent
+
+services:
+  agent:
+    build: .
+    image: retail-analytics-agent:latest
+    stdin_open: true
+    tty: true
+    env_file:
+      - .env
+    environment:
+      GOOGLE_CLOUD_QUOTA_PROJECT: ${GCP_PROJECT_ID:-}
+    volumes:
+      - ./memory:/app/memory
+      - ./data:/app/data
+      - ./config:/app/config

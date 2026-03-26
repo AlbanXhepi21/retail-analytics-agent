@@ -1,0 +1,18 @@
+{
+  "default": {
+    "output_format": "table",
+    "detail_level": "standard"
+  },
+  "manager_a": {
+    "output_format": "table",
+    "detail_level": "detailed"
+  },
+  "manager_b": {
+    "output_format": "bullets",
+    "detail_level": "summary"
+  },
+  "smoke_tester": {
+    "output_format": "bullets",
+    "detail_level": "standard"
+  }
+}
