@@ -18,7 +18,7 @@ DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "golden_bucket
 
 HIGH_CONFIDENCE = 0.70
 MEDIUM_CONFIDENCE = 0.50
-DEDUP_QUESTION_SIMILARITY = 0.92
+DEDUP_QUESTION_SIMILARITY = 0.88
 QUESTION_STOPWORDS = {"what", "is", "the", "for", "this", "show", "me", "a", "an", "of", "by", "to", "in"}
 
 
@@ -96,6 +96,12 @@ class GoldenBucketRetriever:
         try:
             with open(self.data_path, "r") as f:
                 self.trios = json.load(f)
+            # Backfill fingerprints for older entries so dedup stays stable across versions.
+            for t in self.trios:
+                if not t.get("question_fingerprint"):
+                    t["question_fingerprint"] = _fingerprint(_normalize_question(t.get("question", "")))
+                if "sql_fingerprint" not in t:
+                    t["sql_fingerprint"] = _fingerprint(_normalize_sql(t.get("sql") or ""))
             self._doc_tokens = [_tokenize(t["question"]) for t in self.trios]
             self._vocab = _build_vocab(self._doc_tokens)
             self._idf_vec = _idf(self._doc_tokens, self._vocab)
@@ -135,8 +141,12 @@ class GoldenBucketRetriever:
             return "medium"
         return "low"
 
-    def add_trio(self, trio: Dict[str, Any]) -> None:
-        """Add a new Trio and persist to disk, deduplicating near-identical entries."""
+    def add_trio(self, trio: Dict[str, Any]) -> Dict[str, Any]:
+        """Add a new Trio and persist to disk, deduplicating near-identical entries.
+
+        Returns:
+            {"added": bool, "existing_id": Optional[str]}
+        """
         trio.setdefault("schema_version", "1.1")
         trio.setdefault("provenance", trio.get("source", "manual"))
         trio_question = trio.get("question", "")
@@ -151,15 +161,22 @@ class GoldenBucketRetriever:
             existing["last_seen_at"] = trio.get("created_at")
             existing["duplicate_hits"] = int(existing.get("duplicate_hits", 0)) + 1
             logger.info("Detected duplicate trio; updated metadata for: %s", existing.get("id", "unknown"))
+            added = False
+            existing_id = existing.get("id")
         else:
             self.trios.append(trio)
+            added = True
+            existing_id = None
         try:
             with open(self.data_path, "w") as f:
                 json.dump(self.trios, f, indent=2)
             self._load()
-            logger.info("Added new trio: %s", trio.get("id", "unknown"))
+            if added:
+                logger.info("Added new trio: %s", trio.get("id", "unknown"))
+            return {"added": added, "existing_id": existing_id}
         except Exception as e:
             logger.error("Failed to persist new trio: %s", e)
+            return {"added": False, "existing_id": existing_id}
 
     def _find_duplicate_index(self, trio: Dict[str, Any]) -> Optional[int]:
         q_fp = trio.get("question_fingerprint")
@@ -172,7 +189,10 @@ class GoldenBucketRetriever:
                 existing_q_fp = _fingerprint(_normalize_question(existing.get("question", "")))
             if existing_q_fp == q_fp:
                 return idx
-            if existing.get("sql_fingerprint") == sql_fp and sql_fp != _fingerprint(""):
+            existing_sql_fp = existing.get("sql_fingerprint")
+            if existing_sql_fp is None:
+                existing_sql_fp = _fingerprint(_normalize_sql(existing.get("sql") or ""))
+            if existing_sql_fp == sql_fp and sql_fp != _fingerprint(""):
                 return idx
             if q_vec and idx < len(self._doc_vecs):
                 if _cosine(q_vec, self._doc_vecs[idx]) >= DEDUP_QUESTION_SIMILARITY:

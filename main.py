@@ -14,11 +14,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+from agent.cancel_phrases import is_cancel_message as _is_cancel_message
+from agent.controller import _is_confirm_message
 from agent.graph import build_graph
-from agent.nodes.report_generator import generate_report as _regenerate_report
+from agent.pending_destructive_store import clear_pending, load_pending
 
 HISTORY_PATH = os.path.join(os.path.dirname(__file__), "memory", "chat_history.json")
 AUDIT_PATH = os.path.join(os.path.dirname(__file__), "memory", "audit_log.jsonl")
+
 MAX_HISTORY_TURNS = 5
 
 
@@ -108,7 +111,7 @@ def main():
     parser = argparse.ArgumentParser(description="Retail Analytics Agent CLI")
     parser.add_argument(
         "--user", default="default",
-        help="User profile ID (affects output format). Examples: manager_a, manager_b",
+        help="User id for separate chat history (persona is global). Examples: manager_a, manager_b",
     )
     args = parser.parse_args()
 
@@ -132,9 +135,7 @@ def main():
         print(f"ERROR: Failed to build agent graph: {e}")
         sys.exit(1)
 
-    pending_confirmation = None
     chat_history = _load_chat_history(args.user)
-    last_analysis_state: dict | None = None
 
     if chat_history:
         print(f"  Restored {len(chat_history) // 2} previous conversation turn(s).")
@@ -155,6 +156,45 @@ def main():
         trace_id = str(uuid.uuid4())[:8]
         start_time = time.time()
 
+        pending_stored = load_pending(args.user)
+        pending_for_invoke = None
+        if pending_stored:
+            if _is_cancel_message(user_input):
+                clear_pending(args.user)
+                _print_report("**Deletion cancelled.** No saved reports were removed.")
+                chat_history.append({"role": "user", "content": user_input})
+                chat_history.append(
+                    {"role": "assistant", "content": "**Deletion cancelled.** No saved reports were removed."}
+                )
+                chat_history = chat_history[-(MAX_HISTORY_TURNS * 2):]
+                _save_chat_history(args.user, chat_history)
+                continue
+            if _is_confirm_message(user_input):
+                pending_for_invoke = pending_stored
+            else:
+                clear_pending(args.user)
+        else:
+            # No pending on disk: never send bare "cancel"/"confirm" to the agent (misclassified as out_of_scope).
+            if _is_cancel_message(user_input):
+                msg = "There is no pending saved-report deletion to cancel."
+                _print_report(msg)
+                chat_history.append({"role": "user", "content": user_input})
+                chat_history.append({"role": "assistant", "content": msg})
+                chat_history = chat_history[-(MAX_HISTORY_TURNS * 2):]
+                _save_chat_history(args.user, chat_history)
+                continue
+            if _is_confirm_message(user_input):
+                msg = (
+                    "There is no pending deletion to confirm. "
+                    "First ask to delete saved reports (e.g. mentioning a client name), then reply **confirm**."
+                )
+                _print_report(msg)
+                chat_history.append({"role": "user", "content": user_input})
+                chat_history.append({"role": "assistant", "content": msg})
+                chat_history = chat_history[-(MAX_HISTORY_TURNS * 2):]
+                _save_chat_history(args.user, chat_history)
+                continue
+
         initial_state = {
             "user_message": user_input,
             "user_id": args.user,
@@ -162,9 +202,9 @@ def main():
             "node_path": [],
             "sql_retry_count": 0,
             "sql_error": "",
-            "pending_confirmation": pending_confirmation,
             "chat_history": chat_history,
             "node_latency_ms": {},
+            "pending_destructive": pending_for_invoke,
         }
 
         try:
@@ -192,29 +232,7 @@ def main():
         result["trace_id"] = trace_id
         logger.info("Request %s completed in %dms", trace_id, elapsed_ms)
 
-        pending_confirmation = result.get("pending_confirmation")
-
-        if result.get("sql_result") and not result.get("sql_error"):
-            last_analysis_state = {
-                "sql_result": result["sql_result"],
-                "sql_result_columns": result.get("sql_result_columns", []),
-                "user_message": result.get("user_message", user_input),
-                "retrieved_trios": result.get("retrieved_trios", []),
-                "pii_masked": result.get("pii_masked", False),
-            }
-
-        if result.get("preference_updated") and last_analysis_state:
-            regen_state = {
-                **last_analysis_state,
-                "user_id": args.user,
-                "chat_history": chat_history,
-                "report": "",
-            }
-            regen_result = _regenerate_report(regen_state)
-            report = regen_result.get("report", "")
-            logger.info("Re-generated previous report with updated preferences")
-        else:
-            report = result.get("report", "")
+        report = result.get("report", "")
 
         report = report or ""
         if not report:
@@ -291,9 +309,9 @@ def main():
             "pii_masked": result.get("pii_masked", False),
             "pii_columns_dropped": result.get("pii_columns_dropped", []),
             "pii_values_redacted": result.get("pii_values_redacted", 0),
-            "preference_updated": result.get("preference_updated", False),
-            "learned_trio_id": result.get("learned_trio_id"),
-            "pending_confirmation": bool(result.get("pending_confirmation")),
+            "destructive_phase": result.get("destructive_phase"),
+            "destructive_deleted_count": result.get("destructive_deleted_count"),
+            "pending_destructive_after": bool(load_pending(args.user)),
             "status": "success" if report else "failure",
             "failure_category": "none" if report else "empty_report",
             "error_message": (result.get("error_message") or result.get("sql_error") or "")[:500],

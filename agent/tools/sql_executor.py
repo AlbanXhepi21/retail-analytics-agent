@@ -1,4 +1,4 @@
-"""SQL Executor — runs generated SQL against BigQuery with error handling."""
+"""SQL Executor tool — runs generated SQL against BigQuery with error handling."""
 
 import logging
 import os
@@ -16,12 +16,12 @@ def _get_client():
     global _bq_client
     if _bq_client is None:
         from tools.bq_client import BigQueryRunner
+
         _bq_client = BigQueryRunner(project_id=os.environ.get("GCP_PROJECT_ID"))
     return _bq_client
 
 
 def execute_sql(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Execute the generated SQL and handle errors for the retry loop."""
     node_path = ["sql_executor"]
 
     sql = state.get("generated_sql", "")
@@ -83,22 +83,18 @@ def execute_sql(state: Dict[str, Any]) -> Dict[str, Any]:
 
         if is_infra:
             logger.error("Unrecoverable infrastructure error (skipping retries): %s", error_msg)
-            return {
-                "sql_error": error_msg,
-                "sql_retry_count": MAX_SQL_RETRIES,
-                "node_path": node_path,
-            }
+            return {"sql_error": error_msg, "sql_retry_count": MAX_SQL_RETRIES, "node_path": node_path}
 
         new_retry = retry_count + 1
         logger.warning("SQL execution failed (attempt %d/%d): %s", new_retry, MAX_SQL_RETRIES, error_msg)
 
         if new_retry < MAX_SQL_RETRIES:
-            delay = 1.5 ** new_retry
+            delay = 1.5**new_retry
             logger.info("Will retry after %.1fs backoff", delay)
             time.sleep(delay)
 
-        return {
-            "sql_error": error_msg,
-            "sql_retry_count": new_retry,
-            "node_path": node_path,
-        }
+        return {"sql_error": error_msg, "sql_retry_count": new_retry, "node_path": node_path}
+
+
+__all__ = ["execute_sql", "MAX_SQL_RETRIES"]
+

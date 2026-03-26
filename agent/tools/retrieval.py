@@ -1,4 +1,4 @@
-"""Retrieves matching Trios from the Golden Bucket before SQL generation."""
+"""Retrieval tool: find matching Golden Bucket trios for a question."""
 
 import logging
 from typing import Dict, Any
@@ -18,7 +18,6 @@ def _get_retriever() -> GoldenBucketRetriever:
 
 
 def retrieve_golden_bucket(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Find the most relevant analyst Trios for the user's question."""
     question = state.get("user_message", "")
     node_path = ["golden_bucket_retriever"]
 
@@ -28,7 +27,9 @@ def retrieve_golden_bucket(state: Dict[str, Any]) -> Dict[str, Any]:
 
     logger.info(
         "Golden Bucket: best_score=%.3f confidence=%s matched=%d",
-        best_score, confidence, len(trios),
+        best_score,
+        confidence,
+        len(trios),
     )
 
     return {
@@ -37,3 +38,7 @@ def retrieve_golden_bucket(state: Dict[str, Any]) -> Dict[str, Any]:
         "golden_bucket_confidence": confidence,
         "node_path": node_path,
     }
+
+
+__all__ = ["retrieve_golden_bucket"]
+

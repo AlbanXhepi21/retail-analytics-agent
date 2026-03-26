@@ -1,26 +1,47 @@
-"""PII Masker — strips personal data from query results before report generation.
-
-Two-layer approach:
-  1. Column name matching: drops columns named email, phone, address, etc.
-  2. Pattern scanning: regex scan for email/phone patterns in remaining string values.
-"""
+"""Safety tool: mask PII in query results (fail-closed)."""
 
 import logging
 import re
-from typing import Dict, Any, List
+from typing import Dict, Any
 
 logger = logging.getLogger(__name__)
 
 PII_COLUMN_NAMES = {
-    "email", "phone", "mobile", "telephone", "cell",
-    "street_address", "address", "postal_code", "zip_code", "zipcode",
-    "ssn", "social_security", "credit_card", "card_number",
-    "latitude", "longitude", "lat", "lng", "lon",
+    "email",
+    "phone",
+    "mobile",
+    "telephone",
+    "cell",
+    "street_address",
+    "address",
+    "postal_code",
+    "zip_code",
+    "zipcode",
+    "ssn",
+    "social_security",
+    "credit_card",
+    "card_number",
+    "latitude",
+    "longitude",
+    "lat",
+    "lng",
+    "lon",
 }
 
 PII_COLUMN_KEYWORDS = {
-    "email", "phone", "mobile", "telephone", "cell",
-    "address", "postal", "zip", "latitude", "longitude", "lat", "lng", "lon",
+    "email",
+    "phone",
+    "mobile",
+    "telephone",
+    "cell",
+    "address",
+    "postal",
+    "zip",
+    "latitude",
+    "longitude",
+    "lat",
+    "lng",
+    "lon",
 }
 
 EMAIL_PATTERN = re.compile(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}")
@@ -36,7 +57,6 @@ def _is_pii_column(column_name: str) -> bool:
 
 
 def mask_pii(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Strip PII from SQL results. Fail-closed: on error, return empty result."""
     node_path = ["pii_masker"]
 
     result = state.get("sql_result", [])
@@ -68,13 +88,25 @@ def mask_pii(state: Dict[str, Any]) -> Dict[str, Any]:
                         redacted_count += 1
                     if PHONE_PATTERN.search(str(row[key])):
                         candidate = PHONE_PATTERN.sub("[PHONE REDACTED]", str(row[key]))
-                        if "[PHONE REDACTED]" in candidate and not candidate.replace("[PHONE REDACTED]", "").strip().replace("$", "").replace(",", "").replace(".", "").isdigit():
+                        if (
+                            "[PHONE REDACTED]" in candidate
+                            and not candidate.replace("[PHONE REDACTED]", "")
+                            .strip()
+                            .replace("$", "")
+                            .replace(",", "")
+                            .replace(".", "")
+                            .isdigit()
+                        ):
                             row[key] = candidate
                             redacted_count += 1
 
         masked = bool(dropped_columns or redacted_count)
         if masked:
-            logger.info("PII masking applied: %d columns dropped, %d values redacted", len(dropped_columns), redacted_count)
+            logger.info(
+                "PII masking applied: %d columns dropped, %d values redacted",
+                len(dropped_columns),
+                redacted_count,
+            )
 
         return {
             "sql_result": result,
@@ -96,3 +128,7 @@ def mask_pii(state: Dict[str, Any]) -> Dict[str, Any]:
             "node_path": node_path,
             "error_message": f"PII masker error (data withheld for safety): {e}",
         }
+
+
+__all__ = ["mask_pii"]
+

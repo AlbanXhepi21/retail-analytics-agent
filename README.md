@@ -13,12 +13,10 @@ Non-technical managers can ask plain English questions and receive analyst-grade
 | Natural language → SQL | Gemini 2.5 Flash with schema context |
 | Hybrid Intelligence | Golden Bucket (expert Trio retrieval via TF-IDF) |
 | PII Masking | Column + pattern-based redaction (always-on) |
-| Destructive Op Safety | 2-step confirmation flow for report deletion |
 | Self-Correction | SQL retry loop (max 3 attempts, exponential backoff) |
-| User Preference Learning | Detects & persists format preferences from conversation |
-| System Learning Loop | Auto-expands Golden Bucket from successful interactions |
 | Persona Management | Runtime-editable tone/instructions (no redeploy) |
 | Observability | trace_id, node_path, per-node latency, structured audit log |
+| High-stakes Saved Reports | Delete-by-phrase with **preview → confirm → execute**; state in `memory/pending_destructive.json` |
 
 ---
 
@@ -54,7 +52,7 @@ gcloud auth application-default login
 ```bash
 python main.py
 
-# With a specific user profile (affects output format):
+# With a specific user id (separate chat history file key):
 python main.py --user manager_a
 python main.py --user manager_b
 
@@ -112,16 +110,9 @@ Which product categories generate the most revenue?
 What is the order status breakdown?
 Which age group spends the most?
 What tables are available in the database?
-
-# Preference changes (persisted per user):
-I prefer bullet points
-Switch to table format
-Keep it brief
-More detail
-
-# Destructive operations (requires confirmation):
-Delete all reports mentioning Acme Corp
 ```
+
+**Saved Reports (destructive — two-step):** first ask, for example, `Delete all saved reports mentioning Acme Corp`. The agent lists matches and asks for confirmation. Reply **`confirm`** (or **`cancel`**) on the next line. Nothing is deleted until you confirm.
 
 ---
 
@@ -132,28 +123,20 @@ retail-analytics-agent/
 ├── agent/
 │   ├── graph.py              # LangGraph state machine
 │   ├── state.py              # Typed state schema
-│   └── nodes/
-│       ├── intent_classifier.py
-│       ├── golden_bucket_retriever.py
-│       ├── schema_handler.py
-│       ├── sql_generator.py
-│       ├── sql_executor.py
-│       ├── pii_masker.py
-│       ├── report_generator.py
-│       ├── confirmation_handler.py
-│       ├── preference_handler.py   # Detect & persist user prefs
-│       └── learning_loop.py        # Auto-expand Golden Bucket
+│   ├── controller.py         # Controller loop nodes (controller / tool_executor / summarizer)
+│   └── tools/                # Tool pool + registry (intent, SQL, PII, report, saved reports delete)
 ├── tools/
 │   ├── bq_client.py          # BigQuery runner + schema context
-│   └── golden_bucket.py      # TF-IDF Trio retrieval
+│   ├── golden_bucket.py      # TF-IDF Trio retrieval
+│   └── saved_reports_store.py  # Saved Reports JSON persistence + search/delete
 ├── config/
 │   └── persona.json          # Editable agent persona (no redeploy)
 ├── data/
 │   ├── golden_bucket.json    # Expert analyst Trios
-│   └── saved_reports.json    # Reports library (for deletion demo)
+│   └── saved_reports.json    # Saved Reports library (GDPR-style delete via confirmation flow)
 ├── memory/
-│   ├── user_prefs.json       # Per-user format preferences
 │   ├── chat_history.json     # Short-term chat (per user)
+│   ├── pending_destructive.json  # Awaiting confirmation for Saved Report deletions
 │   └── audit_log.jsonl       # Structured observability events
 ├── docs/
 │   ├── HLD.md                # Full technical design document
@@ -207,15 +190,19 @@ Use these records for postmortems and trend dashboards (intent drift, retry spik
 
 ---
 
-## Prototype Requirements Implemented
+## Prototype requirements (assignment deliverable 3)
 
-The prototype implements **3 of the optional requirements**:
+The brief asks the prototype to implement **at least two** of these five capabilities:
 
-1. **Safety & PII Masking** — Three-layer PII protection (intent gate + prompt rules + post-query masker). The masker drops PII columns and regex-scans all string values. Fails closed on error.
+1. Safety & PII Masking  
+2. High-Stakes Oversight (Saved Reports / destructive ops + confirmation)  
+3. Resilience & Graceful Error Handling  
+4. Quality Assurance  
+5. Observability  
 
-2. **High-Stakes Oversight** — 2-step confirmation flow for destructive operations. No deletion ever executes on the first message. Supports confirm/cancel words and logs all deletions for audit.
+**This codebase implements four of the five:** **(1) Safety & PII Masking**, **(2) High-Stakes Oversight** (Saved Reports in `data/saved_reports.json`; `plan_delete_saved_reports` shows a preview; user must reply **`confirm`**; `execute_delete_saved_reports` runs only after confirmation; pending payload stored per user in `memory/pending_destructive.json`), **(3) Resilience & Graceful Error Handling**, and **(5) Observability**.
 
-3. **Resilience & Graceful Error Handling** — SQL self-correction loop (max 3 retries with exponential backoff). Handles syntax errors, empty results, LLM failures, and BQ transient errors. PII masker fails closed. Report generator falls back to raw data on LLM failure.
+**(4) Quality Assurance** is documented as a **pre-deployment methodology** in `docs/qa_plan.md` (pytest, smoke tests, rubric); there is no separate automated “intent vs report” judge in code.
 
 ---
 

@@ -11,7 +11,16 @@ class AgentState(TypedDict, total=False):
     chat_history: List[Dict[str, str]]  # [{"role": "user"|"assistant", "content": "..."}]
 
     # Intent classification
-    intent: str  # analysis | destructive | schema_question | out_of_scope
+    intent: str  # analysis | out_of_scope | destructive_saved_reports
+
+    # Agentic loop control
+    next_action: str  # call_tool | ask_user | finish
+    controller_decision: Dict[str, Any]
+    iterations_used: int
+    max_iterations: int
+    halt_reason: str
+    goals: List[Dict[str, Any]]
+    current_goal_id: str
 
     # Golden Bucket
     retrieved_trios: List[Dict[str, Any]]
@@ -24,6 +33,8 @@ class AgentState(TypedDict, total=False):
     sql_result_columns: List[str]
     sql_error: str
     sql_retry_count: int
+    sql_error_signature: str
+    sql_error_repeat_count: int
 
     # PII
     pii_columns_dropped: List[str]
@@ -33,13 +44,19 @@ class AgentState(TypedDict, total=False):
     # Report
     report: str
 
-    # Destructive ops
-    pending_confirmation: Optional[Dict[str, Any]]
-    confirmation_result: str
+    # High-stakes Saved Reports (destructive, confirmation-gated)
+    pending_destructive: Dict[str, Any]
+    destructive_phase: str
+    destructive_deleted_count: int
 
-    # Learning loop
-    learned_trio_id: str
-    preference_updated: bool
+    # Tool execution trace
+    latest_tool_result: Dict[str, Any]
+    latest_observation_summary: str
+    facts: List[str]
+    tool_trace: List[Dict[str, Any]]
+    last_tool_name: str
+    last_tool_ok: bool
+    last_tool_error: str
 
     # Observability
     trace_id: str

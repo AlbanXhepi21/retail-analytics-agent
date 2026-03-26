@@ -9,3 +9,7 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+memory/audit_log.jsonl
+memory/chat_history.json
+memory/sql_fix_memory.json
+memory/pending_destructive.json

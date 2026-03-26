@@ -1,4 +1,4 @@
-from agent.nodes.sql_generator import _build_prompt
+from agent.tools.sql_generator import _build_prompt
 
 
 def test_prompt_includes_question_and_examples():

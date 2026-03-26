@@ -1,5 +1,6 @@
-"""SQL Generator — uses Gemini + schema context + Golden Bucket examples."""
+"""SQL Generator tool — uses Gemini + schema context + Golden Bucket examples."""
 
+import json
 import logging
 import os
 from typing import Dict, Any
@@ -7,15 +8,25 @@ from typing import Dict, Any
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
+
 MAX_SQL_RETRIES = 3
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
+GEMINI_API_VERSION = os.environ.get("GEMINI_API_VERSION", "v1")
+
+SQL_FIX_MEMORY_PATH = os.path.join(os.path.dirname(__file__), "..", "..", "memory", "sql_fix_memory.json")
 
 _UNRECOVERABLE_KEYWORDS = [
-    "api_key_invalid", "api key not valid",
-    "resource_exhausted", "quota exceeded",
-    "permission_denied", "forbidden",
+    "api_key_invalid",
+    "api key not valid",
+    "resource_exhausted",
+    "quota exceeded",
+    "permission_denied",
+    "forbidden",
     "invalid_argument",
-    "not_found", "no longer available",
+    "not_found",
+    "no longer available",
 ]
+
 
 class SQLQuery(BaseModel):
     sql: str = Field(description="The BigQuery SQL query without markdown fences, explanation, or comments")
@@ -24,12 +35,34 @@ class SQLQuery(BaseModel):
 def _schema_context() -> str:
     try:
         from tools.bq_client import TABLE_SCHEMA_CONTEXT
+
         return TABLE_SCHEMA_CONTEXT
     except Exception:
-        return (
-            "Dataset: bigquery-public-data.thelook_ecommerce\n"
-            "Tables: orders, order_items, products, users"
-        )
+        return "Dataset: bigquery-public-data.thelook_ecommerce\nTables: orders, order_items, products, users"
+
+
+def _load_sql_fix_memory() -> Dict[str, Any]:
+    try:
+        with open(SQL_FIX_MEMORY_PATH, "r") as f:
+            return json.load(f)
+    except Exception:
+        return {"errors": {}, "recoveries": {}}
+
+
+def _signature_fix_instruction(signature: str) -> str:
+    mapping = {
+        "timestamp_sub_month_invalid": (
+            "For month windows in BigQuery, do NOT use TIMESTAMP_SUB(..., INTERVAL N MONTH) on TIMESTAMP. "
+            "Use DATE_SUB(CURRENT_DATE(), INTERVAL N MONTH) and compare DATE(...) values, "
+            "or cast DATE_SUB result back to TIMESTAMP."
+        ),
+        "sql_syntax_error": (
+            "Ensure valid SQL formatting with spaces between keywords and identifiers "
+            "(e.g. 'SELECT t1.col FROM ...', not 'SELECTt1.col')."
+        ),
+        "invalid_query": "Fix the previous BigQuery invalidQuery issue and return executable SQL only.",
+    }
+    return mapping.get(signature, "")
 
 
 SQL_SYSTEM_PROMPT = f"""You are a BigQuery SQL expert for a retail analytics platform.
@@ -50,7 +83,9 @@ CRITICAL RULES:
 def _format_history(chat_history: list) -> str:
     if not chat_history:
         return ""
-    lines = ["\nRecent conversation history (for resolving references like 'same thing', 'those', 'that category', etc.):"]
+    lines = [
+        "\nRecent conversation history (for resolving references like 'same thing', 'those', 'that category', etc.):"
+    ]
     for msg in chat_history:
         role = "User" if msg["role"] == "user" else "Assistant"
         content = msg["content"][:200]
@@ -58,7 +93,13 @@ def _format_history(chat_history: list) -> str:
     return "\n".join(lines)
 
 
-def _build_prompt(question: str, trios: list, chat_history: list, sql_error: str = "") -> str:
+def _build_prompt(
+    question: str,
+    trios: list,
+    chat_history: list,
+    sql_error: str = "",
+    sql_error_signature: str = "",
+) -> str:
     parts = []
 
     history_text = _format_history(chat_history)
@@ -71,30 +112,43 @@ def _build_prompt(question: str, trios: list, chat_history: list, sql_error: str
         parts.append("\nHere are similar analyst-verified queries for reference:")
         for i, trio in enumerate(trios):
             if trio.get("sql"):
-                parts.append(
-                    f"\nExample {i+1}:\n"
-                    f"  Question: {trio['question']}\n"
-                    f"  SQL: {trio['sql']}"
-                )
+                parts.append(f"\nExample {i+1}:\n  Question: {trio['question']}\n  SQL: {trio['sql']}")
 
     if sql_error:
         parts.append(
             f"\n⚠️ The previous SQL attempt failed with this error:\n{sql_error}\n"
             "Fix the error and generate a corrected query."
         )
+    if sql_error_signature:
+        fix_instruction = _signature_fix_instruction(sql_error_signature)
+        if fix_instruction:
+            parts.append(f"\nKnown fix guidance:\n- {fix_instruction}")
+
+    memory = _load_sql_fix_memory()
+    sig_counts = memory.get("errors", {})
+    if sig_counts:
+        ranked = sorted(
+            ((k, int(v.get("count", 0))) for k, v in sig_counts.items()),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+        top_sig = ranked[0][0] if ranked else ""
+        top_fix = _signature_fix_instruction(top_sig)
+        if top_fix:
+            parts.append(f"\nHistorical reliability hint:\n- {top_fix}")
 
     parts.append("\nGenerate the SQL query:")
     return "\n".join(parts)
 
 
 def generate_sql(state: Dict[str, Any]) -> Dict[str, Any]:
-    """Generate a BigQuery SQL query using Gemini with schema + Golden Bucket context."""
     node_path = ["sql_generator"]
 
     question = state.get("user_message", "")
     trios = state.get("retrieved_trios", [])
     chat_history = state.get("chat_history", [])
     sql_error = state.get("sql_error", "")
+    sql_error_signature = state.get("sql_error_signature", "")
     retry_count = state.get("sql_retry_count", 0)
 
     logger.info("Generating SQL (attempt %d)", retry_count + 1)
@@ -104,28 +158,22 @@ def generate_sql(state: Dict[str, Any]) -> Dict[str, Any]:
         from langchain_core.messages import SystemMessage, HumanMessage
 
         llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
+            model=GEMINI_MODEL,
             temperature=0.1,
             max_retries=1,
             timeout=30,
             google_api_key=os.environ.get("GOOGLE_API_KEY"),
+            model_kwargs={"api_version": GEMINI_API_VERSION},
         )
         structured_llm = llm.with_structured_output(SQLQuery)
 
-        prompt = _build_prompt(question, trios, chat_history, sql_error)
-        response = structured_llm.invoke([
-            SystemMessage(content=SQL_SYSTEM_PROMPT),
-            HumanMessage(content=prompt),
-        ])
+        prompt = _build_prompt(question, trios, chat_history, sql_error, sql_error_signature)
+        response = structured_llm.invoke([SystemMessage(content=SQL_SYSTEM_PROMPT), HumanMessage(content=prompt)])
 
         sql = response.sql.strip()
         logger.info("Generated SQL: %s", sql[:200])
 
-        return {
-            "generated_sql": sql,
-            "sql_error": "",
-            "node_path": node_path,
-        }
+        return {"generated_sql": sql, "sql_error": "", "node_path": node_path}
 
     except Exception as e:
         error_lower = str(e).lower()
@@ -149,3 +197,7 @@ def generate_sql(state: Dict[str, Any]) -> Dict[str, Any]:
             "node_path": node_path,
             "error_message": f"SQL generation failed: {e}",
         }
+
+
+__all__ = ["generate_sql", "MAX_SQL_RETRIES"]
+
